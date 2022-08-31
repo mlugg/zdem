@@ -133,6 +133,10 @@ pub fn parseSvcPacketEntities(comptime T: type, pp: anytype) !T {
     return @import("ent_update.zig").parseEntityUpdate(T, pp);
 }
 
+pub fn postParseSvcPacketEntities(pp: anytype, ptr: anytype) void {
+    return @import("ent_update.zig").postParseEntityUpdate(pp, ptr);
+}
+
 pub fn readBitAngle(br: anytype, bits: u5) !f32 {
     const shift = @intToFloat(f32, @as(u32, 1) << bits);
     const i = try br.readUnsigned(u32, bits);
@@ -277,7 +281,22 @@ pub fn PacketParser(comptime BitReader: type) type {
                 try packets.append(pkt);
             }
 
-            return self.arena.dupe(packet.NetSvcMessage, packets.items);
+            const packets_copy = try self.arena.dupe(packet.NetSvcMessage, packets.items);
+
+            // run post-parse hooks
+            for (packets_copy) |*pkt| {
+                inline for (std.meta.fields(packet.PacketType)) |field_info| {
+                    if (@intToEnum(packet.PacketType, field_info.value) == std.meta.activeTag(pkt.*)) {
+                        if (@hasDecl(@TypeOf(@field(pkt, field_info.name)), "postParse")) {
+                            const f = @field(@TypeOf(@field(pkt, field_info.name)), "postParse");
+                            f(self, pkt);
+                        }
+                        break;
+                    }
+                } else unreachable;
+            }
+
+            return packets_copy;
         }
     };
 }

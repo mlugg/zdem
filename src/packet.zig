@@ -163,7 +163,7 @@ pub const NetSvcMessage = union(PacketType) {
     },
     svc_packet_entities: struct {
         max_entries: u11,
-        delta_from: ?u32,
+        delta_from: ?*Demo.NetSvcMessage,
         baseline: bool,
         update_baseline: bool,
         updates: []EntityUpdate,
@@ -182,6 +182,7 @@ pub const NetSvcMessage = union(PacketType) {
             },
         };
         pub const parse = packet_parser.parseSvcPacketEntities;
+        pub const postParse = packet_parser.postParseSvcPacketEntities;
     },
     svc_temp_entities: struct {
         entry_count: u8,

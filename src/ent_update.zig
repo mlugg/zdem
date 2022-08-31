@@ -5,7 +5,7 @@ const parseEntProps = @import("ent_prop_parser.zig").parseEntProps;
 
 pub fn parseEntityUpdate(comptime T: type, pp: anytype) !T {
     const max_entries = try pp.br.readInt(u11);
-    const delta_from = if (try pp.br.readBool()) try pp.br.readInt(u32) else null;
+    const delta_from_tick = if (try pp.br.readBool()) try pp.br.readInt(u32) else null;
     const baseline = try pp.br.readBool();
     const updated_entries = try pp.br.readInt(u11);
     const data_len = try pp.br.readInt(u20);
@@ -13,32 +13,21 @@ pub fn parseEntityUpdate(comptime T: type, pp: anytype) !T {
 
     var snapshot = Demo.EntityFrame{
         .server_tick = pp.demo_state.cur_server_tick,
+        .update = undefined, // TODO: we need to fill this with a pointer to the packet
     };
 
-    if (delta_from != null) {
-        const frames = pp.demo_state.entityFrames();
-        snapshot.entities = for (frames) |frame| {
-            if (frame.server_tick == delta_from) {
-                var entities: [2048]?Demo.EntityFrame.Entity = undefined;
-                for (entities) |*ent_out, i| {
-                    if (frame.entities[i]) |ent| {
-                        // TODO: jesus the memory leaks here
-                        const props = try pp.arena.dupe(Demo.EntProp.Value, ent.props);
-                        ent_out.* = .{
-                            .class_idx = ent.class_idx,
-                            .serial = ent.serial,
-                            .in_pvs = ent.in_pvs,
-                            .props = props,
-                        };
-                    } else {
-                        ent_out.* = null;
-                    }
-                }
-                break entities;
+    var delta_from: ?*Demo.NetSvcMessage = null;
+
+    if (delta_from_tick != null) {
+        for (pp.demo_state.entityFrames()) |frame| {
+            if (frame.server_tick == delta_from_tick) {
+                snapshot.entities = frame.entities;
+                delta_from = frame.update;
+                break;
             }
         } else {
             return error.EntityDeltaFromBadTick;
-        };
+        }
     }
 
     var updates = std.ArrayList(T.EntityUpdate).init(pp.raw_allocator);
@@ -66,10 +55,6 @@ pub fn parseEntityUpdate(comptime T: type, pp: anytype) !T {
                     const class = pp.demo_state.processed_classes.values()[ent.class_idx];
                     const props = try parseEntProps(pp.raw_allocator, pp.arena, pp.br, class);
                     defer pp.raw_allocator.free(props);
-
-                    for (props) |prop| {
-                        ent.props[prop.idx] = prop.value;
-                    }
 
                     const props_copy = try pp.arena.dupe(Demo.EntProp, props);
 
@@ -109,27 +94,17 @@ pub fn parseEntityUpdate(comptime T: type, pp: anytype) !T {
                 const class = pp.demo_state.processed_classes.values()[class_idx];
 
                 if (new) {
-                    // TODO: this... doesn't *leak* memory as such, as it's an arena, but we probably don't
-                    // want to keep the old snapshot prop arrays around when we delete/replace entities. how
-                    // can we deal with this nicely? maybe we could use a fixed prop array per slot to avoid
-                    // constant allocations of new arrays when new entities enter the pvs?
                     snapshot.entities[idx] = .{
                         .class_idx = class_idx,
                         .serial = serial,
                         .in_pvs = true,
-                        .props = try pp.arena.alloc(Demo.EntProp.Value, class.props.count()),
                     };
 
-                    // fill in from baseline
-                    std.mem.copy(Demo.EntProp.Value, snapshot.entities[idx].?.props, try pp.demo_state.getBaseline(class_idx));
+                    // TODO: assert baseline exists
                 }
 
                 const props = try parseEntProps(pp.raw_allocator, pp.arena, pp.br, class);
                 defer pp.raw_allocator.free(props);
-
-                for (props) |prop| {
-                    snapshot.entities[idx].?.props[prop.idx] = prop.value;
-                }
 
                 const props_copy = try pp.arena.dupe(Demo.EntProp, props);
 
@@ -189,6 +164,11 @@ pub fn parseEntityUpdate(comptime T: type, pp: anytype) !T {
         .update_baseline = update_baseline,
         .updates = updates_copy,
     };
+}
+
+pub fn postParseEntityUpdate(pp: anytype, ptr: anytype) void {
+    // TODO FIXME: this breaks horribly if we have multiple SVC_PacketEntities messages in one packet!
+    pp.demo_state.lastEntityFrame().?.update = ptr;
 }
 
 fn readVarInt(br: anytype) !u32 {

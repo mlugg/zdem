@@ -28,9 +28,9 @@ pub fn entityFrames(self: *DemoState) []Demo.EntityFrame {
     return self._frames[self._first_frame .. self._first_frame + self._frame_count];
 }
 
-pub fn lastEntityFrame(self: *DemoState) ?Demo.EntityFrame {
+pub fn lastEntityFrame(self: *DemoState) ?*Demo.EntityFrame {
     const frames = self.entityFrames();
-    return if (frames.len == 0) null else frames[frames.len - 1];
+    return if (frames.len == 0) null else &frames[frames.len - 1];
 }
 
 pub fn addEntityFrame(self: *DemoState, frame: Demo.EntityFrame) void {
